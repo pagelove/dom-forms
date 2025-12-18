@@ -7,8 +7,8 @@ name: Deploy to CDN
 on:
   push:
     branches:
+      - main       # canary channel
       - beta       # beta channel
-      - develop    # canary channel
     tags:
       - 'v*'       # latest channel (tags only)
   workflow_dispatch:
@@ -85,10 +85,10 @@ jobs:
 
           # Set channel based on ref
           # latest channel only updates with tagged versions (not branch pushes)
-          if [[ "$GITHUB_REF" == "refs/heads/beta" ]]; then
-            echo "channel=beta" >> $GITHUB_OUTPUT
-          elif [[ "$GITHUB_REF" == "refs/heads/develop" ]]; then
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
             echo "channel=canary" >> $GITHUB_OUTPUT
+          elif [[ "$GITHUB_REF" == "refs/heads/beta" ]]; then
+            echo "channel=beta" >> $GITHUB_OUTPUT
           fi
 
           # Handle tagged versions
@@ -364,7 +364,7 @@ jobs:
           echo "// Beta (beta branch) - auto-resolves to current SHA" >> $GITHUB_STEP_SUMMARY
           echo "import 'https://cdn.pagelove.net/js/$MODULE_NAME/beta/index.mjs';" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "// Canary (develop branch) - auto-resolves to current SHA" >> $GITHUB_STEP_SUMMARY
+          echo "// Canary (main branch) - auto-resolves to current SHA" >> $GITHUB_STEP_SUMMARY
           echo "import 'https://cdn.pagelove.net/js/$MODULE_NAME/canary/index.mjs';" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "// Or use a specific version (immutable)" >> $GITHUB_STEP_SUMMARY
