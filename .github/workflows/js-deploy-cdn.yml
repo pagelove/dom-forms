@@ -194,12 +194,17 @@ jobs:
             # Always upload full version (v1.0.0) - this is truly immutable
             upload_version "${{ steps.versions.outputs.full_version }}" "public, max-age=31536000, immutable" "immutable version, cache forever"
 
-            # Minor version (v1.0) - create a loader that points to latest patch in this series
+            # Minor version (v1.0) - create a dynamic loader and version.json
             MINOR_VER="${{ steps.versions.outputs.minor_version }}"
             mkdir -p "loader/$MINOR_VER"
 
-            # Create loader with variable substitution
-            printf "// Loader for %s - auto-resolves to latest patch release\nexport * from 'https://cdn.pagelove.net/js/%s/%s/%s'\n" "$MINOR_VER" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" > "loader/$MINOR_VER/index.mjs"
+            # Create version.json for minor version loader
+            printf '{"version":"%s","path":"/js/%s/%s","mainPath":"%s","updated":"%s"}\n' "$FULL_VERSION" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "loader/$MINOR_VER/version.json"
+
+            # Create dynamic loader for minor version
+            cat > "loader/$MINOR_VER/index.mjs" <<LOADER_EOF
+const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MINOR_VER/version.json')).json();export*from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
+LOADER_EOF
 
             az storage blob upload \
               --account-name "$AZURE_STORAGE_ACCOUNT" \
@@ -209,10 +214,7 @@ jobs:
               --file "loader/$MINOR_VER/index.mjs" \
               --overwrite \
               --content-type "application/javascript" \
-              --content-cache-control "public, max-age=3600, stale-while-revalidate=86400"
-
-            # Create version.json for minor version loader
-            printf '{"version":"%s","path":"/js/%s/%s","mainPath":"%s","updated":"%s"}\n' "$FULL_VERSION" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "loader/$MINOR_VER/version.json"
+              --content-cache-control "public, max-age=86400, stale-while-revalidate=604800"
 
             az storage blob upload \
               --account-name "$AZURE_STORAGE_ACCOUNT" \
@@ -224,14 +226,19 @@ jobs:
               --content-type "application/json" \
               --content-cache-control "public, max-age=60, must-revalidate"
 
-            echo "✓ Uploaded /$MINOR_VER/index.mjs loader → $FULL_VERSION"
+            echo "✓ Uploaded /$MINOR_VER/index.mjs loader (dynamic)"
 
-            # Major version (v1) - create a loader that points to latest minor in this series
+            # Major version (v1) - create a dynamic loader and version.json
             MAJOR_VER="${{ steps.versions.outputs.major_version }}"
             mkdir -p "loader/$MAJOR_VER"
 
-            # Create loader with variable substitution
-            printf "// Loader for %s - auto-resolves to latest minor release\nexport * from 'https://cdn.pagelove.net/js/%s/%s/%s'\n" "$MAJOR_VER" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" > "loader/$MAJOR_VER/index.mjs"
+            # Create version.json for major version loader
+            printf '{"version":"%s","path":"/js/%s/%s","mainPath":"%s","updated":"%s"}\n' "$FULL_VERSION" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "loader/$MAJOR_VER/version.json"
+
+            # Create dynamic loader for major version
+            cat > "loader/$MAJOR_VER/index.mjs" <<LOADER_EOF
+const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MAJOR_VER/version.json')).json();export*from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
+LOADER_EOF
 
             az storage blob upload \
               --account-name "$AZURE_STORAGE_ACCOUNT" \
@@ -241,10 +248,7 @@ jobs:
               --file "loader/$MAJOR_VER/index.mjs" \
               --overwrite \
               --content-type "application/javascript" \
-              --content-cache-control "public, max-age=3600, stale-while-revalidate=86400"
-
-            # Create version.json for major version loader
-            printf '{"version":"%s","path":"/js/%s/%s","mainPath":"%s","updated":"%s"}\n' "$FULL_VERSION" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "loader/$MAJOR_VER/version.json"
+              --content-cache-control "public, max-age=86400, stale-while-revalidate=604800"
 
             az storage blob upload \
               --account-name "$AZURE_STORAGE_ACCOUNT" \
@@ -256,7 +260,7 @@ jobs:
               --content-type "application/json" \
               --content-cache-control "public, max-age=60, must-revalidate"
 
-            echo "✓ Uploaded /$MAJOR_VER/index.mjs loader → $FULL_VERSION"
+            echo "✓ Uploaded /$MAJOR_VER/index.mjs loader (dynamic)"
           fi
 
           # Generate channel-specific loader and version.json for the current channel
