@@ -201,6 +201,7 @@ jobs:
             # Create version.json for minor version loader
             printf '{"version":"%s","path":"/js/%s/%s","mainPath":"%s","updated":"%s"}\n' "$FULL_VERSION" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "loader/$MINOR_VER/version.json"
 
+
             # Create dynamic loader for minor version
             echo "const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MINOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath" > "loader/$MINOR_VER/index.mjs"
 
