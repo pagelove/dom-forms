@@ -203,7 +203,7 @@ jobs:
 
             # Create dynamic loader for minor version
             cat > "loader/$MINOR_VER/index.mjs" <<LOADER_EOF
-const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MINOR_VER/version.json')).json();export*from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
+const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MINOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
 LOADER_EOF
 
             az storage blob upload \
@@ -237,7 +237,7 @@ LOADER_EOF
 
             # Create dynamic loader for major version
             cat > "loader/$MAJOR_VER/index.mjs" <<LOADER_EOF
-const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MAJOR_VER/version.json')).json();export*from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
+const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MAJOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
 LOADER_EOF
 
             az storage blob upload \
@@ -269,13 +269,13 @@ LOADER_EOF
 
             # Generate channel-specific version.json
             cat > "loader/${CHANNEL}/version.json" <<VERSION_EOF
-          {"channel":"$CHANNEL","sha":"$SHA","version":${FULL_VERSION:+"\"$FULL_VERSION\""}${FULL_VERSION:-null},"path":"/js/$MODULE_NAME/sha/$SHA","mainPath":"$MAIN_PATH","updated":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"}
-          VERSION_EOF
+{"channel":"$CHANNEL","sha":"$SHA","version":${FULL_VERSION:+"\"$FULL_VERSION\""}${FULL_VERSION:-null},"path":"/js/$MODULE_NAME/sha/$SHA","mainPath":"$MAIN_PATH","updated":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"}
+VERSION_EOF
 
             # Generate minimal loader that fetches its own version.json
             cat > "loader/${CHANNEL}/index.mjs" <<LOADER_EOF
-          const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/${CHANNEL}/version.json')).json();export*from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
-          LOADER_EOF
+const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/${CHANNEL}/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
+LOADER_EOF
 
             # Upload channel loader with long cache
             az storage blob upload \
