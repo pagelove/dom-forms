@@ -202,9 +202,9 @@ jobs:
             printf '{"version":"%s","path":"/js/%s/%s","mainPath":"%s","updated":"%s"}\n' "$FULL_VERSION" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "loader/$MINOR_VER/version.json"
 
             # Create dynamic loader for minor version
-            cat > "loader/$MINOR_VER/index.mjs" <<LOADER_EOF
-const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MINOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
-LOADER_EOF
+            cat > "loader/$MINOR_VER/index.mjs" <<-LOADER_EOF
+          const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MINOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
+          LOADER_EOF
 
             az storage blob upload \
               --account-name "$AZURE_STORAGE_ACCOUNT" \
@@ -236,9 +236,9 @@ LOADER_EOF
             printf '{"version":"%s","path":"/js/%s/%s","mainPath":"%s","updated":"%s"}\n' "$FULL_VERSION" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "loader/$MAJOR_VER/version.json"
 
             # Create dynamic loader for major version
-            cat > "loader/$MAJOR_VER/index.mjs" <<LOADER_EOF
-const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MAJOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
-LOADER_EOF
+            cat > "loader/$MAJOR_VER/index.mjs" <<-LOADER_EOF
+          const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MAJOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
+          LOADER_EOF
 
             az storage blob upload \
               --account-name "$AZURE_STORAGE_ACCOUNT" \
@@ -268,14 +268,14 @@ LOADER_EOF
           mkdir -p "loader/${CHANNEL}"
 
           # Generate channel-specific version.json
-          cat > "loader/${CHANNEL}/version.json" <<VERSION_EOF
-{"channel":"$CHANNEL","sha":"$SHA","version":${FULL_VERSION:+"\"$FULL_VERSION\""}${FULL_VERSION:-null},"path":"/js/$MODULE_NAME/sha/$SHA","mainPath":"$MAIN_PATH","updated":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"}
-VERSION_EOF
+          cat > "loader/${CHANNEL}/version.json" <<-VERSION_EOF
+          {"channel":"$CHANNEL","sha":"$SHA","version":${FULL_VERSION:+"\"$FULL_VERSION\""}${FULL_VERSION:-null},"path":"/js/$MODULE_NAME/sha/$SHA","mainPath":"$MAIN_PATH","updated":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"}
+          VERSION_EOF
 
           # Generate minimal loader that fetches its own version.json
-          cat > "loader/${CHANNEL}/index.mjs" <<LOADER_EOF
-const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/${CHANNEL}/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
-LOADER_EOF
+          cat > "loader/${CHANNEL}/index.mjs" <<-LOADER_EOF
+          const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/${CHANNEL}/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
+          LOADER_EOF
 
           # Upload channel loader with long cache
           az storage blob upload \
