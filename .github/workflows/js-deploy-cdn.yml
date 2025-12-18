@@ -203,8 +203,8 @@ jobs:
 
             # Create dynamic loader for minor version
             cat > "loader/$MINOR_VER/index.mjs" <<LOADER_EOF
-const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MINOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
-LOADER_EOF
+          const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MINOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
+          LOADER_EOF
 
             az storage blob upload \
               --account-name "$AZURE_STORAGE_ACCOUNT" \
@@ -237,8 +237,8 @@ LOADER_EOF
 
             # Create dynamic loader for major version
             cat > "loader/$MAJOR_VER/index.mjs" <<LOADER_EOF
-const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MAJOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
-LOADER_EOF
+          const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MAJOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
+          LOADER_EOF
 
             az storage blob upload \
               --account-name "$AZURE_STORAGE_ACCOUNT" \
@@ -265,43 +265,43 @@ LOADER_EOF
 
           # Generate channel-specific loader and version.json for the current channel
           if [[ -n "$CHANNEL" ]]; then
-            mkdir -p "loader/${CHANNEL}"
+          mkdir -p "loader/${CHANNEL}"
 
-            # Generate channel-specific version.json
-            cat > "loader/${CHANNEL}/version.json" <<VERSION_EOF
-{"channel":"$CHANNEL","sha":"$SHA","version":${FULL_VERSION:+"\"$FULL_VERSION\""}${FULL_VERSION:-null},"path":"/js/$MODULE_NAME/sha/$SHA","mainPath":"$MAIN_PATH","updated":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"}
-VERSION_EOF
+          # Generate channel-specific version.json
+          cat > "loader/${CHANNEL}/version.json" <<VERSION_EOF
+          {"channel":"$CHANNEL","sha":"$SHA","version":${FULL_VERSION:+"\"$FULL_VERSION\""}${FULL_VERSION:-null},"path":"/js/$MODULE_NAME/sha/$SHA","mainPath":"$MAIN_PATH","updated":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"}
+          VERSION_EOF
 
-            # Generate minimal loader that fetches its own version.json
-            cat > "loader/${CHANNEL}/index.mjs" <<LOADER_EOF
-const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/${CHANNEL}/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
-LOADER_EOF
+          # Generate minimal loader that fetches its own version.json
+          cat > "loader/${CHANNEL}/index.mjs" <<LOADER_EOF
+          const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/${CHANNEL}/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
+          LOADER_EOF
 
-            # Upload channel loader with long cache
-            az storage blob upload \
-              --account-name "$AZURE_STORAGE_ACCOUNT" \
-              --auth-mode login \
-              --container-name "$AZURE_STORAGE_CONTAINER" \
-              --name "js/$MODULE_NAME/${CHANNEL}/index.mjs" \
-              --file "loader/${CHANNEL}/index.mjs" \
-              --overwrite \
-              --content-type "application/javascript" \
-              --content-cache-control "public, max-age=86400, stale-while-revalidate=604800"
+          # Upload channel loader with long cache
+          az storage blob upload \
+            --account-name "$AZURE_STORAGE_ACCOUNT" \
+            --auth-mode login \
+            --container-name "$AZURE_STORAGE_CONTAINER" \
+            --name "js/$MODULE_NAME/${CHANNEL}/index.mjs" \
+            --file "loader/${CHANNEL}/index.mjs" \
+            --overwrite \
+            --content-type "application/javascript" \
+            --content-cache-control "public, max-age=86400, stale-while-revalidate=604800"
 
-            echo "✓ Uploaded /${CHANNEL}/index.mjs loader ($(wc -c < "loader/${CHANNEL}/index.mjs" | tr -d ' ') bytes)"
+          echo "✓ Uploaded /${CHANNEL}/index.mjs loader ($(wc -c < "loader/${CHANNEL}/index.mjs" | tr -d ' ') bytes)"
 
-            # Upload channel-specific version.json with short cache
-            az storage blob upload \
-              --account-name "$AZURE_STORAGE_ACCOUNT" \
-              --auth-mode login \
-              --container-name "$AZURE_STORAGE_CONTAINER" \
-              --name "js/$MODULE_NAME/${CHANNEL}/version.json" \
-              --file "loader/${CHANNEL}/version.json" \
-              --overwrite \
-              --content-type "application/json" \
-              --content-cache-control "public, max-age=60, must-revalidate"
+          # Upload channel-specific version.json with short cache
+          az storage blob upload \
+            --account-name "$AZURE_STORAGE_ACCOUNT" \
+            --auth-mode login \
+            --container-name "$AZURE_STORAGE_CONTAINER" \
+            --name "js/$MODULE_NAME/${CHANNEL}/version.json" \
+            --file "loader/${CHANNEL}/version.json" \
+            --overwrite \
+            --content-type "application/json" \
+            --content-cache-control "public, max-age=60, must-revalidate"
 
-            echo "✓ Uploaded /${CHANNEL}/version.json ($(wc -c < "loader/${CHANNEL}/version.json" | tr -d ' ') bytes)"
+          echo "✓ Uploaded /${CHANNEL}/version.json ($(wc -c < "loader/${CHANNEL}/version.json" | tr -d ' ') bytes)"
           fi
 
           # Print testable URLs
