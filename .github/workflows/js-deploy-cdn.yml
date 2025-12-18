@@ -203,8 +203,8 @@ jobs:
 
             # Create dynamic loader for minor version
             cat > "loader/$MINOR_VER/index.mjs" <<-LOADER_EOF
-          const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MINOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
-          LOADER_EOF
+            const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MINOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
+            LOADER_EOF
 
             az storage blob upload \
               --account-name "$AZURE_STORAGE_ACCOUNT" \
@@ -237,8 +237,8 @@ jobs:
 
             # Create dynamic loader for major version
             cat > "loader/$MAJOR_VER/index.mjs" <<-LOADER_EOF
-          const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MAJOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
-          LOADER_EOF
+            const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MAJOR_VER/version.json')).json();export * from 'https://cdn.pagelove.net'+m.path+'/'+m.mainPath
+            LOADER_EOF
 
             az storage blob upload \
               --account-name "$AZURE_STORAGE_ACCOUNT" \
