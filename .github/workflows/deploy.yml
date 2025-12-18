@@ -1,0 +1,400 @@
+name: Deploy to CDN
+
+# Generic deployment workflow for Pagelove JavaScript modules
+# Copy this file to .github/workflows/deploy.yml in any module repo
+# Module name is auto-detected from the repository name
+
+on:
+  push:
+    branches:
+      - main       # canary channel
+      - beta       # beta channel
+    tags:
+      - 'v*'       # latest channel (tags only)
+  workflow_dispatch:
+    inputs:
+      minify:
+        description: 'Enable minification and obfuscation'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  MINIFY: ${{ github.event.inputs.minify || 'false' }}
+  AZURE_STORAGE_ACCOUNT: ${{ secrets.AZURE_STORAGE_ACCOUNT }}
+  AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Detect module name
+        id: module
+        run: |
+          # Extract module name from repository name (e.g., pagelove/dom-subscriber -> dom-subscriber)
+          MODULE_NAME="${GITHUB_REPOSITORY#*/}"
+          echo "name=$MODULE_NAME" >> $GITHUB_OUTPUT
+          echo "Detected module name: $MODULE_NAME"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        if: env.MINIFY == 'true'
+        run: npm install -g terser
+
+      - name: Install Azure CLI
+        run: |
+          if ! command -v az &> /dev/null; then
+            curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+          fi
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read module version
+        id: module_version
+        run: |
+          if [ -f "version.json" ]; then
+            MODULE_VERSION=$(jq -r '.version' version.json)
+            echo "module_version=$MODULE_VERSION" >> $GITHUB_OUTPUT
+            echo "Module version from version.json: $MODULE_VERSION"
+          else
+            echo "No version.json found - will use git tags or SHA only"
+          fi
+
+      - name: Determine versions to deploy
+        id: versions
+        run: |
+          SHA="${GITHUB_SHA:0:7}"
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+
+          # Set channel based on ref
+          # latest channel only updates with tagged versions (not branch pushes)
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            echo "channel=canary" >> $GITHUB_OUTPUT
+          elif [[ "$GITHUB_REF" == "refs/heads/beta" ]]; then
+            echo "channel=beta" >> $GITHUB_OUTPUT
+          fi
+
+          # Handle tagged versions
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "full_version=v$VERSION" >> $GITHUB_OUTPUT
+            MINOR_VERSION=$(echo $VERSION | cut -d. -f1-2)
+            echo "minor_version=v$MINOR_VERSION" >> $GITHUB_OUTPUT
+            MAJOR_VERSION=$(echo $VERSION | cut -d. -f1)
+            echo "major_version=v$MAJOR_VERSION" >> $GITHUB_OUTPUT
+            # Tags update the 'latest' channel
+            echo "channel=latest" >> $GITHUB_OUTPUT
+          elif [[ -n "${{ steps.module_version.outputs.module_version }}" ]]; then
+            VERSION="${{ steps.module_version.outputs.module_version }}"
+            echo "full_version=v$VERSION" >> $GITHUB_OUTPUT
+            MINOR_VERSION=$(echo $VERSION | cut -d. -f1-2)
+            echo "minor_version=v$MINOR_VERSION" >> $GITHUB_OUTPUT
+            MAJOR_VERSION=$(echo $VERSION | cut -d. -f1)
+            echo "major_version=v$MAJOR_VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate Azure storage config
+        run: |
+          set -euo pipefail
+          if [[ -z "${AZURE_STORAGE_ACCOUNT:-}" ]]; then
+            echo "Error: AZURE_STORAGE_ACCOUNT secret is missing" >&2
+            exit 1
+          fi
+          if [[ -z "${AZURE_STORAGE_CONTAINER:-}" ]]; then
+            echo "Error: AZURE_STORAGE_CONTAINER secret is missing" >&2
+            exit 1
+          fi
+          if [[ -z "${{ secrets.AZURE_CLIENT_ID }}" || -z "${{ secrets.AZURE_TENANT_ID }}" || -z "${{ secrets.AZURE_SUBSCRIPTION_ID }}" ]]; then
+            echo "Error: Azure federated credentials (AZURE_CLIENT_ID/AZURE_TENANT_ID/AZURE_SUBSCRIPTION_ID) are missing" >&2
+            exit 1
+          fi
+
+      - name: Process and deploy files
+        run: |
+          set -euo pipefail
+          MODULE_NAME="${{ steps.module.outputs.name }}"
+          SHA="${{ steps.versions.outputs.sha }}"
+          CHANNEL="${{ steps.versions.outputs.channel }}"
+          FULL_VERSION="${{ steps.versions.outputs.full_version }}"
+
+          mkdir -p dist
+
+          # Find and process all .mjs files (excluding node_modules)
+          find . -name "*.mjs" -type f -not -path "./node_modules/*" -not -path "./dist/*" | while read -r file; do
+            # Remove leading ./
+            rel_path="${file#./}"
+
+            # Create directory structure in dist
+            mkdir -p "dist/$(dirname "$rel_path")"
+
+            if [[ "$MINIFY" == "true" ]]; then
+              echo "Minifying: $rel_path"
+              terser "$file" --compress --mangle --module -o "dist/$rel_path"
+            else
+              echo "Copying: $rel_path"
+              cp "$file" "dist/$rel_path"
+            fi
+          done
+
+          # Count files to deploy
+          FILE_COUNT=$(find dist -name "*.mjs" -type f | wc -l)
+          echo "Prepared $FILE_COUNT file(s) for deployment"
+
+          # Upload function with appropriate cache headers
+          upload_version() {
+            local version_path=$1
+            local cache_control=$2
+            local description=$3
+
+            echo "Uploading $MODULE_NAME to: /js/$MODULE_NAME/$version_path ($description)"
+
+            az storage blob upload-batch \
+              --account-name "$AZURE_STORAGE_ACCOUNT" \
+              --auth-mode login \
+              --destination "$AZURE_STORAGE_CONTAINER" \
+              --destination-path "js/$MODULE_NAME/$version_path" \
+              --source dist \
+              --pattern "*.mjs" \
+              --overwrite \
+              --content-type "application/javascript" \
+              --content-cache-control "$cache_control"
+
+            echo "✓ Uploaded to: https://cdn.pagelove.net/js/$MODULE_NAME/$version_path/"
+          }
+
+          # Find the main entry point (prefer index.mjs, or first .mjs file)
+          MAIN_FILE=$(find dist -name "index.mjs" -type f | head -n 1)
+          if [[ -z "$MAIN_FILE" ]]; then
+            MAIN_FILE=$(find dist -name "*.mjs" -type f | head -n 1)
+          fi
+          MAIN_PATH="${MAIN_FILE#dist/}"
+
+          # Always upload to git SHA path
+          upload_version "sha/$SHA" "public, max-age=31536000, immutable" "immutable SHA, cache forever"
+
+          # Upload to version paths if this is a tag or has version.json
+          if [[ -n "$FULL_VERSION" ]]; then
+            # Always upload full version (v1.0.0) - this is truly immutable
+            upload_version "${{ steps.versions.outputs.full_version }}" "public, max-age=31536000, immutable" "immutable version, cache forever"
+
+            # Minor version (v1.0) - create a dynamic loader and version.json
+            MINOR_VER="${{ steps.versions.outputs.minor_version }}"
+            mkdir -p "loader/$MINOR_VER"
+
+            # Create version.json for minor version loader
+            printf '{"version":"%s","path":"/js/%s/%s","mainPath":"%s","updated":"%s"}\n' "$FULL_VERSION" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "loader/$MINOR_VER/version.json"
+
+            # Create dynamic loader for minor version
+            echo "const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MINOR_VER/version.json')).json();const url=\`https://cdn.pagelove.net\${m.path}/\${m.mainPath}\`;export*from\`data:text/javascript,export*from\"\${url}\"\`;" > "loader/$MINOR_VER/index.mjs"
+
+            az storage blob upload \
+              --account-name "$AZURE_STORAGE_ACCOUNT" \
+              --auth-mode login \
+              --container-name "$AZURE_STORAGE_CONTAINER" \
+              --name "js/$MODULE_NAME/$MINOR_VER/index.mjs" \
+              --file "loader/$MINOR_VER/index.mjs" \
+              --overwrite \
+              --content-type "application/javascript" \
+              --content-cache-control "public, max-age=86400, stale-while-revalidate=604800"
+
+            az storage blob upload \
+              --account-name "$AZURE_STORAGE_ACCOUNT" \
+              --auth-mode login \
+              --container-name "$AZURE_STORAGE_CONTAINER" \
+              --name "js/$MODULE_NAME/$MINOR_VER/version.json" \
+              --file "loader/$MINOR_VER/version.json" \
+              --overwrite \
+              --content-type "application/json" \
+              --content-cache-control "public, max-age=60, must-revalidate"
+
+            echo "✓ Uploaded /$MINOR_VER/index.mjs loader (dynamic)"
+
+            # Major version (v1) - create a dynamic loader and version.json
+            MAJOR_VER="${{ steps.versions.outputs.major_version }}"
+            mkdir -p "loader/$MAJOR_VER"
+
+            # Create version.json for major version loader
+            printf '{"version":"%s","path":"/js/%s/%s","mainPath":"%s","updated":"%s"}\n' "$FULL_VERSION" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "loader/$MAJOR_VER/version.json"
+
+            # Create dynamic loader for major version
+            echo "const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/$MAJOR_VER/version.json')).json();const url=\`https://cdn.pagelove.net\${m.path}/\${m.mainPath}\`;export*from\`data:text/javascript,export*from\"\${url}\"\`;" > "loader/$MAJOR_VER/index.mjs"
+
+            az storage blob upload \
+              --account-name "$AZURE_STORAGE_ACCOUNT" \
+              --auth-mode login \
+              --container-name "$AZURE_STORAGE_CONTAINER" \
+              --name "js/$MODULE_NAME/$MAJOR_VER/index.mjs" \
+              --file "loader/$MAJOR_VER/index.mjs" \
+              --overwrite \
+              --content-type "application/javascript" \
+              --content-cache-control "public, max-age=86400, stale-while-revalidate=604800"
+
+            az storage blob upload \
+              --account-name "$AZURE_STORAGE_ACCOUNT" \
+              --auth-mode login \
+              --container-name "$AZURE_STORAGE_CONTAINER" \
+              --name "js/$MODULE_NAME/$MAJOR_VER/version.json" \
+              --file "loader/$MAJOR_VER/version.json" \
+              --overwrite \
+              --content-type "application/json" \
+              --content-cache-control "public, max-age=60, must-revalidate"
+
+            echo "✓ Uploaded /$MAJOR_VER/index.mjs loader (dynamic)"
+          fi
+
+          # Generate channel-specific loader and version.json for the current channel
+          if [[ -n "$CHANNEL" ]]; then
+          mkdir -p "loader/${CHANNEL}"
+
+          # Generate channel-specific version.json
+          echo "{\"channel\":\"$CHANNEL\",\"sha\":\"$SHA\",\"version\":${FULL_VERSION:+"\"$FULL_VERSION\""}${FULL_VERSION:-null},\"path\":\"/js/$MODULE_NAME/sha/$SHA\",\"mainPath\":\"$MAIN_PATH\",\"updated\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"}" > "loader/${CHANNEL}/version.json"
+
+          # Generate minimal loader that fetches its own version.json
+          echo "const m=await(await fetch('https://cdn.pagelove.net/js/$MODULE_NAME/${CHANNEL}/version.json')).json();const url=\`https://cdn.pagelove.net\${m.path}/\${m.mainPath}\`;export*from\`data:text/javascript,export*from\"\${url}\"\`;" > "loader/${CHANNEL}/index.mjs"
+
+          # Upload channel loader with long cache
+          az storage blob upload \
+            --account-name "$AZURE_STORAGE_ACCOUNT" \
+            --auth-mode login \
+            --container-name "$AZURE_STORAGE_CONTAINER" \
+            --name "js/$MODULE_NAME/${CHANNEL}/index.mjs" \
+            --file "loader/${CHANNEL}/index.mjs" \
+            --overwrite \
+            --content-type "application/javascript" \
+            --content-cache-control "public, max-age=86400, stale-while-revalidate=604800"
+
+          echo "✓ Uploaded /${CHANNEL}/index.mjs loader ($(wc -c < "loader/${CHANNEL}/index.mjs" | tr -d ' ') bytes)"
+
+          # Upload channel-specific version.json with short cache
+          az storage blob upload \
+            --account-name "$AZURE_STORAGE_ACCOUNT" \
+            --auth-mode login \
+            --container-name "$AZURE_STORAGE_CONTAINER" \
+            --name "js/$MODULE_NAME/${CHANNEL}/version.json" \
+            --file "loader/${CHANNEL}/version.json" \
+            --overwrite \
+            --content-type "application/json" \
+            --content-cache-control "public, max-age=60, must-revalidate"
+
+          echo "✓ Uploaded /${CHANNEL}/version.json ($(wc -c < "loader/${CHANNEL}/version.json" | tr -d ' ') bytes)"
+          fi
+
+          # Print testable URLs
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🚀 Deployment Complete - Test Your Module:"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # Find the main entry point
+          MAIN_FILE=$(find dist -name "index.mjs" -type f | head -n 1)
+          if [[ -z "$MAIN_FILE" ]]; then
+            MAIN_FILE=$(find dist -name "*.mjs" -type f | head -n 1)
+          fi
+          MAIN_PATH="${MAIN_FILE#dist/}"
+
+          if [[ -n "$CHANNEL" ]]; then
+            echo "📦 Channel (auto-updates):"
+            echo "   https://cdn.pagelove.net/js/$MODULE_NAME/$CHANNEL/index.mjs"
+            echo ""
+          fi
+
+          if [[ -n "$FULL_VERSION" ]]; then
+            echo "📌 Version (immutable):"
+            echo "   https://cdn.pagelove.net/js/$MODULE_NAME/$FULL_VERSION/$MAIN_PATH"
+            echo ""
+          fi
+
+          echo "🔗 SHA (this deployment, immutable):"
+          echo "   https://cdn.pagelove.net/js/$MODULE_NAME/sha/$SHA/$MAIN_PATH"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      - name: Summary
+        run: |
+          MODULE_NAME="${{ steps.module.outputs.name }}"
+          SHA="${{ steps.versions.outputs.sha }}"
+          CHANNEL="${{ steps.versions.outputs.channel }}"
+          FULL_VERSION="${{ steps.versions.outputs.full_version }}"
+
+          echo "## Deployment Complete: $MODULE_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Git SHA:** $SHA" >> $GITHUB_STEP_SUMMARY
+          echo "**Minified:** ${{ env.MINIFY }}" >> $GITHUB_STEP_SUMMARY
+
+          if [[ -n "${{ steps.module_version.outputs.module_version }}" ]]; then
+            echo "**Module Version:** ${{ steps.module_version.outputs.module_version }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [[ -n "$CHANNEL" ]]; then
+            echo "**Channel Updated:** $CHANNEL" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [[ -n "$FULL_VERSION" ]]; then
+            echo "**Versions:**" >> $GITHUB_STEP_SUMMARY
+            echo "- ${{ steps.versions.outputs.full_version }}" >> $GITHUB_STEP_SUMMARY
+            echo "- ${{ steps.versions.outputs.minor_version }}" >> $GITHUB_STEP_SUMMARY
+            echo "- ${{ steps.versions.outputs.major_version }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### CDN URLs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "**Channel Loaders (recommended):**" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`javascript" >> $GITHUB_STEP_SUMMARY
+          echo "// Latest (tagged versions) - auto-resolves to current SHA" >> $GITHUB_STEP_SUMMARY
+          echo "import 'https://cdn.pagelove.net/js/$MODULE_NAME/latest/index.mjs';" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "// Beta (beta branch) - auto-resolves to current SHA" >> $GITHUB_STEP_SUMMARY
+          echo "import 'https://cdn.pagelove.net/js/$MODULE_NAME/beta/index.mjs';" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "// Canary (main branch) - auto-resolves to current SHA" >> $GITHUB_STEP_SUMMARY
+          echo "import 'https://cdn.pagelove.net/js/$MODULE_NAME/canary/index.mjs';" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "// Or use a specific version (immutable)" >> $GITHUB_STEP_SUMMARY
+          echo "import 'https://cdn.pagelove.net/js/$MODULE_NAME/v1.0.0/index.mjs';" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "// Or use a specific SHA (immutable)" >> $GITHUB_STEP_SUMMARY
+          echo "import 'https://cdn.pagelove.net/js/$MODULE_NAME/sha/$SHA/index.mjs';" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "_Channel loaders fetch version.json and import the correct immutable SHA._" >> $GITHUB_STEP_SUMMARY
+          echo "_Simply swap 'latest' for 'v1.0.0' or 'sha/abcd123' to use a specific version._" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ -n "$CHANNEL" ]]; then
+            echo "**Channel Version Info:**" >> $GITHUB_STEP_SUMMARY
+            echo "\`https://cdn.pagelove.net/js/$MODULE_NAME/$CHANNEL/version.json\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # List all deployed .mjs files
+          find dist -name "*.mjs" -type f | head -n 1 | while read -r file; do
+            rel_path="${file#dist/}"
+
+            echo "**Direct SHA import (immutable, this deployment):**" >> $GITHUB_STEP_SUMMARY
+            echo "\`https://cdn.pagelove.net/js/$MODULE_NAME/sha/$SHA/$rel_path\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            if [[ -n "$FULL_VERSION" ]]; then
+              echo "**Direct version import (immutable):**" >> $GITHUB_STEP_SUMMARY
+              echo "\`https://cdn.pagelove.net/js/$MODULE_NAME/$FULL_VERSION/$rel_path\`" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
