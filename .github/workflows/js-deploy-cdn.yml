@@ -179,22 +179,85 @@ jobs:
             echo "✓ Uploaded to: https://cdn.pagelove.net/js/$MODULE_NAME/$version_path/"
           }
 
-          # Always upload to git SHA path
-          upload_version "sha/$SHA" "public, max-age=31536000, immutable" "immutable SHA, cache forever"
-
-          # Upload to version paths if this is a tag or has version.json
-          if [[ -n "$FULL_VERSION" ]]; then
-            upload_version "${{ steps.versions.outputs.full_version }}" "public, max-age=31536000, immutable" "immutable version, cache forever"
-            upload_version "${{ steps.versions.outputs.minor_version }}" "public, max-age=31536000, immutable" "immutable version, cache forever"
-            upload_version "${{ steps.versions.outputs.major_version }}" "public, max-age=31536000, immutable" "immutable version, cache forever"
-          fi
-
           # Find the main entry point (prefer index.mjs, or first .mjs file)
           MAIN_FILE=$(find dist -name "index.mjs" -type f | head -n 1)
           if [[ -z "$MAIN_FILE" ]]; then
             MAIN_FILE=$(find dist -name "*.mjs" -type f | head -n 1)
           fi
           MAIN_PATH="${MAIN_FILE#dist/}"
+
+          # Always upload to git SHA path
+          upload_version "sha/$SHA" "public, max-age=31536000, immutable" "immutable SHA, cache forever"
+
+          # Upload to version paths if this is a tag or has version.json
+          if [[ -n "$FULL_VERSION" ]]; then
+            # Always upload full version (v1.0.0) - this is truly immutable
+            upload_version "${{ steps.versions.outputs.full_version }}" "public, max-age=31536000, immutable" "immutable version, cache forever"
+
+            # Minor version (v1.0) - create a loader that points to latest patch in this series
+            MINOR_VER="${{ steps.versions.outputs.minor_version }}"
+            mkdir -p "loader/$MINOR_VER"
+
+            # Create loader with variable substitution
+            printf "// Loader for %s - auto-resolves to latest patch release\nexport * from 'https://cdn.pagelove.net/js/%s/%s/%s'\n" "$MINOR_VER" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" > "loader/$MINOR_VER/index.mjs"
+
+            az storage blob upload \
+              --account-name "$AZURE_STORAGE_ACCOUNT" \
+              --auth-mode login \
+              --container-name "$AZURE_STORAGE_CONTAINER" \
+              --name "js/$MODULE_NAME/$MINOR_VER/index.mjs" \
+              --file "loader/$MINOR_VER/index.mjs" \
+              --overwrite \
+              --content-type "application/javascript" \
+              --content-cache-control "public, max-age=3600, stale-while-revalidate=86400"
+
+            # Create version.json for minor version loader
+            printf '{"version":"%s","path":"/js/%s/%s","mainPath":"%s","updated":"%s"}\n' "$FULL_VERSION" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "loader/$MINOR_VER/version.json"
+
+            az storage blob upload \
+              --account-name "$AZURE_STORAGE_ACCOUNT" \
+              --auth-mode login \
+              --container-name "$AZURE_STORAGE_CONTAINER" \
+              --name "js/$MODULE_NAME/$MINOR_VER/version.json" \
+              --file "loader/$MINOR_VER/version.json" \
+              --overwrite \
+              --content-type "application/json" \
+              --content-cache-control "public, max-age=60, must-revalidate"
+
+            echo "✓ Uploaded /$MINOR_VER/index.mjs loader → $FULL_VERSION"
+
+            # Major version (v1) - create a loader that points to latest minor in this series
+            MAJOR_VER="${{ steps.versions.outputs.major_version }}"
+            mkdir -p "loader/$MAJOR_VER"
+
+            # Create loader with variable substitution
+            printf "// Loader for %s - auto-resolves to latest minor release\nexport * from 'https://cdn.pagelove.net/js/%s/%s/%s'\n" "$MAJOR_VER" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" > "loader/$MAJOR_VER/index.mjs"
+
+            az storage blob upload \
+              --account-name "$AZURE_STORAGE_ACCOUNT" \
+              --auth-mode login \
+              --container-name "$AZURE_STORAGE_CONTAINER" \
+              --name "js/$MODULE_NAME/$MAJOR_VER/index.mjs" \
+              --file "loader/$MAJOR_VER/index.mjs" \
+              --overwrite \
+              --content-type "application/javascript" \
+              --content-cache-control "public, max-age=3600, stale-while-revalidate=86400"
+
+            # Create version.json for major version loader
+            printf '{"version":"%s","path":"/js/%s/%s","mainPath":"%s","updated":"%s"}\n' "$FULL_VERSION" "$MODULE_NAME" "$FULL_VERSION" "$MAIN_PATH" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "loader/$MAJOR_VER/version.json"
+
+            az storage blob upload \
+              --account-name "$AZURE_STORAGE_ACCOUNT" \
+              --auth-mode login \
+              --container-name "$AZURE_STORAGE_CONTAINER" \
+              --name "js/$MODULE_NAME/$MAJOR_VER/version.json" \
+              --file "loader/$MAJOR_VER/version.json" \
+              --overwrite \
+              --content-type "application/json" \
+              --content-cache-control "public, max-age=60, must-revalidate"
+
+            echo "✓ Uploaded /$MAJOR_VER/index.mjs loader → $FULL_VERSION"
+          fi
 
           # Generate channel-specific loader and version.json for the current channel
           if [[ -n "$CHANNEL" ]]; then
