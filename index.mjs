@@ -1,5 +1,5 @@
-import { DOMSubscriber } from "https://cdn.pagelove.net/dom-subscriber/latest/index.mjs";
-import { parseSelectorRequest } from "https://cdn.pagelove.net/dom-primitives/latest/selector-request/index.mjs";
+import { DOMSubscriber } from "../dom-subscriber/v0.1.0/index.mjs";
+import { parseSelectorRequest } from "../selector-request/v0.1.0/index.mjs";
 import * as Invokers from "https://unpkg.com/invokers-polyfill@latest/invoker.min.js";
 
 Object.defineProperty(HTMLElement.prototype, "OPTIONS", {
