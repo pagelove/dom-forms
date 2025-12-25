@@ -202,8 +202,13 @@ jobs:
           echo "### CDN URLs" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Find first .mjs file to show in examples
-          EXAMPLE_FILE=$(find dist -name "*.mjs" -type f | head -n 1)
+          # Find index.mjs (preferred) or first .mjs file as example
+          if [ -f "dist/index.mjs" ]; then
+            EXAMPLE_FILE="dist/index.mjs"
+          else
+            EXAMPLE_FILE=$(find dist -name "*.mjs" -type f | head -n 1)
+          fi
+
           if [[ -n "$EXAMPLE_FILE" ]]; then
             EXAMPLE_PATH="${EXAMPLE_FILE#dist/}"
 
