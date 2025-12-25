@@ -1,4 +1,4 @@
-import { DOMSubscriber } from "../../dom-subscriber/cde4007/index.mjs";
+import { DOMSubscriber } from "../../dom-subscriber/0.1.1/index.mjs";
 import { parseSelectorRequest } from "../../selector-request/0.1.0/index.mjs";
 import * as Invokers from "https://unpkg.com/invokers-polyfill@latest/invoker.min.js";
 
