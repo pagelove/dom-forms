@@ -1,4 +1,5 @@
 import * as DOMForms from './index.mjs'
+import { DOMSubscriber } from "../../dom-subscriber/cde4007/index.mjs";
 
 DOMSubscriber.subscribe(document, '[itemprop]', ( element ) => {
     element.bounce = 0;
